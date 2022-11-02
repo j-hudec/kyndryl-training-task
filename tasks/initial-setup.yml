@@ -1,0 +1,37 @@
+---
+# this playbook provides initial setup of a managed node with clean system installation
+# scenario assumes enabled root account with SSH enabled and no other user accounts
+- name: initial setup of clean-installed managed node
+  hosts: homework
+  remote_user: root
+  tasks:
+    - name: create devops user
+      user:
+        name: devops
+        state: present
+
+    - name: add devops user to sudoers
+      lineinfile:
+        path: /etc/sudoers.d/devops
+        line: "devops        ALL=(ALL)        NOPASSWD: ALL"
+        state: present
+        create: true
+
+    # SSH key was generated beforehand using ssh-keygen
+    - name: add SSH key for devops user account
+      authorized_key:
+        user: devops
+        state: present
+        key: "{{ lookup('file', '~/.ssh/id_rsa.pub') }}"
+
+    - name: assign unique hostname
+      hostname:
+        name: "{{ node_hostname }}"
+        use: systemd
+      notify:
+        - restart node
+
+  handlers:
+    # restart node to apply new hostname
+    - name: restart node
+      reboot:

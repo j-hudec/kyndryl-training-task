@@ -1,0 +1,54 @@
+---
+# this playbook installs basic LAMP stack - Apache, MariaDB and PHP with no further configuration
+- name: install and setup LAMP stack
+  hosts: homework
+  become: yes
+  tasks:
+    - name: install Apache, MariaDB and PHP
+      yum:
+        name: "{{ item }}"
+        state: installed
+      loop:
+        - httpd
+        - mariadb-server
+        - php
+        - php-cli
+        - php-common
+        - php-mysqlnd
+
+    - name: enable installed services
+      service:
+        name: "{{ item }}"
+        enabled: yes
+        state: started
+      loop:
+        - httpd
+        - mariadb
+
+    # # get running services fro debugging purposes
+    # - name: get running services
+    #   service_facts:
+
+    # # print debug message with httpd and mariadb services info
+    # - name: debug running services
+    #   debug:
+    #     msg:
+    #       - "{{ ansible_facts.services['httpd.service'] }}"
+    #       - "{{ ansible_facts.services['mariadb.service'] }}"          
+
+    - name: allow http communication in firewall
+      firewalld:
+        service: http
+        state: enabled
+        immediate: true
+        permanent: true
+
+    - name: copy custom index.php
+      template:
+        src: index.php.j2
+        dest: /var/www/html/index.php
+
+    - name: restart Apache service
+      service:
+        name: httpd
+        state: restarted

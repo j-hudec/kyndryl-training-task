@@ -1,0 +1,93 @@
+---
+# this playbook scans provided .csv file and adds users according to its content
+- name: add users from .csv file
+  hosts: homework
+  become: yes
+  tasks:
+    # find .csv file that matches .csv file type and contains correct header
+    # delegate this task to localhost (control node)
+    - name: find *.csv file
+      delegate_to: localhost
+      find:
+        paths: /etc/ansible/tasks
+        file_type: file
+        contains: ^(User,Comment,Owner-Team,Functional,Pub-key,)$
+        patterns: '*.csv'
+      register: result
+
+    # using block so all tasks in this block are run if correct .csv file is found
+    - name: load .csv, add users and do specific actions
+      block:
+        # read .csv file using path from previous task
+        - name: load .csv file with user details
+          delegate_to: localhost
+          read_csv:
+            path: "{{ result.files[0].path }}"
+            delimiter: ','
+            key: User
+          register: users
+
+        # loop over each line in .csv file and create user account with specified details
+        - name: create user accounts based on .csv file
+          user:
+            name: "{{ item.value['User'] }}"
+            state: present
+            comment: "{{ item.value['Owner-Team'] }}"
+            password: '!'
+          loop: "{{ users.dict | dict2items }}"
+          when: users.dict | length > 0
+                
+        # create default admin account if .csv file is empty
+        - name: create default admin account
+          user:
+            name: admin
+            state: present
+            groups: wheel
+            append: yes
+            password: "{{ admin_password | string | password_hash('sha512') }}"
+          when: users.dict | length == 0
+                
+        # generate SSH key pairs for 'functional' user accounts
+        - name: generate new SSH key pairs
+          delegate_to: localhost
+          openssh_keypair:
+            path: "/etc/ansible/keys/id_{{ item.value['User'] }}_rsa"
+            type: rsa
+          loop: "{{ users.dict | dict2items }}"
+          when: item.value['Functional'] == '1'
+          register: keys
+
+        # add SSH keys for corresponding user accounts on managed node
+        - name: add SSH keys
+          authorized_key:
+            user: "{{ item.value['User'] }}"
+            state: present
+            key: "{{ lookup('file', '/etc/ansible/keys/id_{{ item.value.User }}_rsa.pub') }}"
+          loop: "{{ users.dict | dict2items }}"
+          when: item.value['Functional'] == '1'
+
+        # add specified custom SSH keys, if they are present
+        - name: add custom SSH keys
+          authorized_key:
+            user: "{{ item.value['User'] }}"
+            state: present
+            key: "{{ item.value['Pub-key'] }}"
+          loop: "{{ users.dict | dict2items }}"
+          when: item.value['Pub-key'] | length > 0
+
+        # set user accounts without SSH keys as 'expired'
+        - name: set user accounts without SSH keys as 'expired'
+          shell:
+            cmd: "chage -E 0 {{ item.value['User'] }}"
+          loop: "{{ users.dict | dict2items }}"
+          when: (item.value['Pub-key'] | length == 0) or
+                (item.value['Functional'] == '0')
+
+        # set user accounts with SSH keys as 'not expired'
+        - name: set user accounts with SSH keys as 'not expired'
+          shell:
+            cmd: "chage -E -1 {{ item.value['User'] }}"
+          loop: "{{ users.dict | dict2items }}"
+          when: (item.value['Pub-key'] | length > 0) or
+                (item.value['Functional'] == '1')
+      when: result.matched == 1
